@@ -369,6 +369,15 @@ class Gen:
     {keeps channel 1 on but modifies waveform to a square wave}
     >> Gen.output(0)
     {turns off channel 1}
+    
+    Further Development
+    -------------------
+    1) Should add an order that sets the apparatus on remote mode, so 
+    that you can't change the configuration manually.
+    2) Could define an internal class for its channels so that you can 
+    set 'gen.ch1.output' = True to turn it on or ask freq = 
+    gen.ch1.frequency to get part of its configuration.
+    3) Should add a 'gen.close()' instead of 'gen.gen.close'
 
     """
     
@@ -604,13 +613,13 @@ class Gen:
 
         # These are some keys that help recognize the waveform
         dic = {'sin': 'SIN',
-               'squ': 'PULS',
+               'sq': 'PULS',
                'pul': 'PULS',
-               'tri' : 'RAMP', # ramp and triangle
+               'tr' : 'RAMP', # ramp and triangle
                'ram': 'RAMP', 
-               'lor': 'LOR', # lorentzian
+               'lo': 'LOR', # lorentzian
                'sinc': 'SINC', # sinx/x
-               'gau': 'GAUS'} # gaussian
+               'g': 'GAUS'} # gaussian
         
         if channel not in range(1, self.nchannels+1):
             print("Unrecognized output channel ('CH1' as default).")
