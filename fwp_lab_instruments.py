@@ -51,32 +51,44 @@ class Osci:
     """Allows communication with a Tektronix Digital Oscilloscope.
     
     It allows communication with multiple models, based on the official 
-    Programmer Guide (https://www.tek.com/oscilloscope/tds1002-manual/
-    tds1000-and-tds2000-series-user-manual).
+    Programmer Guide (https://www.tek.com/oscilloscope/tds1000-manual).
     
-        TBS1000B/EDU, 
-        TBS1000, 
-        TDS2000C/TDS1000C-EDU,
-        TDS2000B/TDS1000B, 
-        TDS2000/TDS1000, 
-        TDS200,
-        TPS2000B/TPS2000.
+        TBS1102/TBS1102B/TBS1102B-EDU,
+        TBS1152/TBS1152B/TBS1152B-EDU,
+        TBS1202B/TBS1202B-EDU,
+        TDS210,
+        TDS220/TDS224, 
+        TDS1001/TDS1002/TDS1001B/TDS1002B/TDS1001C-EDU/TDS1002C-EDU,
+        TDS1012/TDS1012B/TDS1012C-EDU, 
+        TDS2002/TDS2004/TDS2002B/TDS2004B/TDS2001C/TDS2002C/TDS2004C,
+        TDS2012/TDS2014/TDS2012B/TDS2014B/TDS2012C/TDS2014C/TDS2022C, 
+        TDS2022/TDS2024/TDS2022B/TDS2024B,
+        TPS2012/TPS2014/TPS2012B/TPS2014B,
+        TPS2024/TPS2024B,
     
     Parameters
     ----------
     port : str
         Computer's port where the oscilloscope is connected.
         i.e.: 'USB0::0x0699::0x0363::C108013::INSTR'
+    termination='\n' : str, optional
+        VISA's character of line termination.
+        i.e.: '\n'
     
     Attributes
     ----------
-    Osci.port : str
-        Computer's port where the oscilloscope is connected.
-        i.e.: 'USB0::0x0699::0x0363::C108013::INSTR'
     Osci.osci : pyvisa.ResourceManager.open_resource() object
         PyVISA object that allows communication.
     Osci.config_measure : dic
         Immediate measurement's current configuration.
+    
+    Other Attributes
+    ----------------
+    Osci.port : str
+        Computer's port where the oscilloscope is connected.
+        i.e.: 'USB0::0x0699::0x0363::C108013::INSTR'
+    Osci.print : bool
+        Whether to print messages or not.
     
     Methods
     -------
@@ -95,21 +107,24 @@ class Osci:
     
     """
 
-    def __init__(self, port):
+    def __init__(self, port, nchannels=2,
+                 termination="\n", print_messages=False):
         
         """Defines oscilloscope object and opens it as Visa resource.
         
         It also defines the following attributes:
-                'Osci.port' (PC's port where it is connected)
                 'Osci.osci' (PyVISA object)
                 'Osci.config_measure' (Measurement's current 
                 configuration)
+                'Osci.print' (Boolen permission to print)
         
         Parameters
         ---------
         port : str
             Computer's port where the oscilloscope is connected.
             i.e.: 'USB0::0x0699::0x0363::C108013::INSTR'
+        nchannels=2 : int
+            Total number of the oscilloscope's channels.
         
         Returns
         -------
@@ -117,40 +132,40 @@ class Osci:
         
         """
         
+        # Main Attribute
         rm = visa.ResourceManager()
-        osci = rm.open_resource(port, read_termination="\n")
-        print(osci.query('*IDN?'))
+        self.osci = rm.open_resource(port, 
+                                     read_termination=termination)
+        del rm
+                
+        print(self.osci.query('*IDN?'))
         
         # General Configuration
-        osci.write('DAT:ENC RPB')
-        osci.write('DAT:WID 1') # Binary transmission mode
+        self.osci.write('DAT:ENC RPB')
+        self.osci.write('DAT:WID 1') # Binary transmission mode
         
-        # Trigger configuration
-#        osci.write('TRIG:MAI:MOD AUTO') # Option: NORM (waits for trig)
-#        osci.write('TRIG:MAI:TYP EDGE')
-#        osci.write('TRIG:MAI:LEV 5')
-#        osci.write('TRIG:MAI:EDGE:SLO RIS')
-#        osci.write('TRIG:MAI:EDGE:SOU CH1') # Option: EXT
-#        osci.write('HOR:MAI:POS 0') # Makes the complete measure at once
-        
-        self.port = port
-        self.osci = osci
+        # Attribute Definitions
+        self.print = print_messages
+        self.channels = [i+1 for i in range(nchannels)]
         self.config_measure = self.get_config_measure()
         self.config_screen = self.get_config_screen()
-        # This last line saves the current measurement configuration
-
-    def screen(self, channels=(1,2)):
+        # This last lines save the current measurement configuration
         
-        """Takes a full measure of a signal on one or two channels.
+        # Inner Attribute Definitions
+
+    def screen(self, channels=[1,2]):
+        
+        """Takes a full measure of a signal on one or more channels.
         
         Parameters
         ----------
-        channels=(1, 2) : int {1, 2}, optional
-            Number of the measure's channel.
+        channels=[1, 2] : int {1, 2, 3, 4}, str {'M'}, list, optional
+            Number of the measure's channel, where 3 or 'M' both 
+            stand for MATH.
         
         Returns
         -------
-        result : int, float
+        result : int, float, list
             Measured value.
         
         See Also
@@ -159,24 +174,30 @@ class Osci:
         
         """        
 
-    def measure(self, mtype, channel=1, print_result=False):
+        channels = self._channels_names(channels)         
         
-        """Takes a measure of a certain type on a certain channel.
+        data = self.osci.query_binary_values('CURV?', datatype='B', container=np.array)
+        data = yze + ymu * (data - yoff)
+        
+        tiempo = xze + np.arange(len(data)) * xin
+
+    def measure(self, mtype, channels=1):
+        
+        """Takes a measure of a certain type on one or more channels.
         
         Parameters
         ----------
         mtype : str
             Key that configures the measure type.
             i.e.: 'Min', 'min', 'minimum', etc.
-        channel=1 : int {1, 2}, optional
-            Number of the measure's channel.
-        print_result=False : bool, optional
-            Says whether to print or not the result.
+        channels=1 : int {1, 2, 3, 4}, str {'M'}, list, optional
+            Number of the measure's channel, where 3 or 'M' both 
+            stand for MATH.
         
         Returns
         -------
-        result : int, float
-            Measured value.
+        result : int, float, list
+            Measured value (int/float) or values (list).
         
         See Also
         --------
@@ -185,16 +206,40 @@ class Osci:
         
         """
         
-        self.re_config_measure(mtype, channel)
+        channels = self._channels_names(channels)
         
-        result = float(self.osci.query('MEASU:IMM:VAL?'))
-        units = self.osci.query('MEASU:IMM:UNI?')
+        results = []
+        for ch in channels:
+            self.re_config_measure(mtype, ch)
         
-        if print_result:
-            print("{} {}".format(result, units))
+            result = float(self.osci.query('MEASU:IMM:VAL?'))
+            units = self.osci.query('MEASU:IMM:UNI?')
         
-        return result
+            self._print("{} {}".format(result, units))
+            
+            results.append(result)
+        
+        try:
+            results[1]
+        except IndexError:
+            results = results[0]
+        
+        return results
 
+    def trigger(self):
+
+#        osci.write('TRIG:MAI:MOD AUTO') # Option: NORM (waits for trig)
+#        osci.write('TRIG:MAI:TYP EDGE')
+#        osci.write('TRIG:MAI:LEV 5')
+#        osci.write('TRIG:MAI:EDGE:SLO RIS')
+#        osci.write('TRIG:MAI:EDGE:SOU CH1') # Option: EXT
+#        osci.write('HOR:MAI:POS 0') # Makes the complete measure at once
+        self._print("Hey! This is missing. What a shame the Complains Department is closed!")
+    
+    def close(self):
+        
+        self.osci.close()
+        
     def get_config_measure(self):
         
         """Returns the current measurements' configuration.
@@ -212,15 +257,19 @@ class Osci:
         
         configuration = {}
         
+        aux = self.osci.query('MEASU:IMM:SOU?')
+        if 'm' in aux:
+            aux = 'M'
+        else:
+            aux = find_1st_number(aux)
         configuration.update({'Source': # channel
-            find_1st_number(self.osci.query('MEASU:IMM:SOU?'))})
+            self._channels_names(aux)}) 
         configuration.update({'Type': # type of measurement
             self.osci.query('MEASU:IMM:TYP?')})
     
         return configuration
 
     def re_config_measure(self, mtype, channel):
-        
         """Reconfigures the measurement, if needed.
         
         Parameters
@@ -228,8 +277,8 @@ class Osci:
         mtype : str
             Key that configures the measure type.
             i.e.: 'Min', 'min', 'minimum', etc.
-        channel=1 : int {1, 2}
-            Number of the measure's channel.
+        channel : str {'CH1', 'CH2', 'CH3', 'CH4', 'MATH'}
+            Measure's channel.
         
         Returns
         -------
@@ -258,10 +307,6 @@ class Osci:
                'low': 'LOW', # 0% reference
                'high': 'HIGH'} # 100% reference
 
-        if channel not in [1,2]:
-            print("Unrecognized measure source ('CH1' as default).")
-            channel = 1
-
         # Here is the algorithm to recognize measurement's type
         if 'c' in mtype.lower():
             if 'rms' in mtype.lower():
@@ -278,12 +323,11 @@ class Osci:
         
         # Now, reconfigure if needed
         if self.config_measure['Source'] != channel:
-            self.osci.write('MEASU:IMM:SOU CH{:.0f}'.format(channel))
-            print("Measure source changed to 'CH{:.0f}'".format(
-                    channel))
+            self.osci.write('MEASU:IMM:SOU {}'.format(channel))
+            self._print("Measure source changed to '{}'".format(channel))
         if self.config_measure['Type'] != aux:
             self.osci.write('MEASU:IMM:TYP {}'.format(aux))
-            print("Measure type changed to '{}'".format(aux))
+            self._print("Measure type changed to '{}'".format(aux))
         
         self.config_measure = self.get_config_measure()
         
@@ -309,13 +353,68 @@ class Osci:
         xze, xin, yze, ymu, yoff = self.osci.query_ascii_values(
                 'WFMPRE:XZE?;XIN?;YZE?;YMU?;YOFF?;',
                 separator=';')
-        
-        configuration.update({'Source': # channel
-            find_1st_number(self.osci.query('MEASU:IMM:SOU?'))})
-        configuration.update({'Type': # type of measurement
-            self.osci.query('MEASU:IMM:TYP?')})
     
         return configuration
+
+    def _channels_names(self, channels_user):
+        
+        """Aconditionates channel or channels' list.
+        
+        Parameters
+        ----------
+        chanels_user : int, list
+            User's input channel/s.
+        
+        Returns
+        -------
+        channels_osc : str, list
+            Oscilloscope's input channels.
+        """
+        
+        try:
+            channels_user[0]
+        except:
+            channels_user = [channels_user]
+    
+        channels_osc = []
+        for i, ch in enumerate(channels_user):
+            try:
+                ch = ch.lower()
+                if 'm' in ch.lower():
+                    channels_osc.append('MATH')
+                else:
+                    message = "Channel's elements should either"
+                    message = message + "be int {1, 2}" 
+                    message = message + "or include 'm'"
+                    return ValueError(message)
+            except SyntaxError:
+                if ch not in self.channels:
+                    message = "If channel's element is int,"
+                    message = message + "should be on {}".format(
+                            [i+1 for i in range(self._nchannels)])
+                    return ValueError(message)
+                channels_osc.append("CH{:.0f}".format(ch))
+        
+        return channels_osc
+    
+    def _print(self, message):
+        
+        """Doesn't print if Osci.print is False.
+        
+        Parameters
+        ----------
+        message : str
+            Message to print.
+        print_all=False : bool
+            Indicates whether to print or not
+        
+        Returns
+        -------
+        nothing
+        """
+        
+        if self.print:
+            print(message)
 
 #%%
 
