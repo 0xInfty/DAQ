@@ -19,6 +19,7 @@ Gen.output : method
 """
 
 from fwp_string import find_1st_number
+import numpy as np
 import pyvisa as visa
 
 #%%
@@ -174,12 +175,45 @@ class Osci:
         
         """        
 
-        channels = self._channels_names(channels)         
+        # First I transform channel names
+        channels = self._channels_names(channels)
         
-        data = self.osci.query_binary_values('CURV?', datatype='B', container=np.array)
-        data = yze + ymu * (data - yoff)
+        # Now I raise some warnings if a numpy array can't be created
+        npoints = []
+        dtime = []
+        for ch in channels:
+            if not self.config_screen['Display'][ch]:
+                self.osci.write('SELECT:{} 1'.format(ch))
+                self.re_config_screen(ch, True)
+            npoints.append(self.config_screen[ch]['NPoints'])
+            dtime.append(self.config_screen[ch]['XInterval'])
+        if npoints != [npoints[0] for ch in channels]:
+            return IndexError(
+                    "{} have different number of points".format(
+                            channels))
+        if dtime != [dtime[0] for ch in channels]:
+            return ValueError(
+                    "{} have different number of points".format(
+                            channels))
+        # Next I stop acquiring
+        self.osci.write('ACQ:STATE 0')
         
-        tiempo = xze + np.arange(len(data)) * xin
+        # I measure (np.array that has time, channels on its columns)
+        results = []
+        results.append(np.linspace(0, npoints*dtime, dtime)) # time
+        for ch in channels:
+            self.osci.write('DATA:SOUR {}'.format(ch))
+            data = self.osci.query_binary_values('CURV?', 
+                                                 datatype='B', 
+                                                 container=np.array)
+            data = self.config_screen[ch]['FData'](data)
+            results.append(data) # voltage data
+        results = np.array(results).T
+        
+        # I keep acquiring
+        self.osci.write('ACQ:STATE 1')
+        
+        return results
 
     def measure(self, mtype, channels=1):
         
@@ -238,6 +272,17 @@ class Osci:
     
     def close(self):
         
+        """Closes VISA communication with oscilloscope.
+        
+        Parameters
+        ----------
+        nothing
+        
+        Returns
+        -------
+        nothing
+        """
+        
         self.osci.close()
         
     def get_config_measure(self):
@@ -270,6 +315,7 @@ class Osci:
         return configuration
 
     def re_config_measure(self, mtype, channel):
+        
         """Reconfigures the measurement, if needed.
         
         Parameters
@@ -347,14 +393,53 @@ class Osci:
             It states the source and type of configured measurement.
             
         """
+
+        origin = self.osci.write('DATA:SOUR?')
         
         configuration = {}
+        configuration.update({'Display' : {}})
+        for ch in ['CH1', 'CH2', 'MATH']:
+            configuration.update({ch : {}})
+            
+            # First I check whether this channel is being shown or not
+            status = self.osci.query('SELECT:{} 1'.format(ch))
+            configuration['Display'].update({ch : bool(int(status))})
+            self.osci.write('SELECT:{} 1'.format(ch))
+            self.osci.write('DATA:SOUR {}'.format(ch))
+            
+            # Now, I save some parameters
+            xinterval = float(self.osci.query('WFMPRE:XIN?'))
+            yzero, ymultiplier, yoffset = self.osci.query_ascii_values(
+                    'WFMPRE:YZE?;YMU?;YOFF?',
+                    separator=';')
+            npoints = int(self.osci.query('WFMP:NR_Pt?'))
+            configuration[ch].update({
+                    'XIncrement' : xinterval,
+                    'YZero' : yzero,
+                    'YMultiplier' : ymultiplier,
+                    'YOffset' : yoffset,
+                    'NPoints' : npoints,
+                    })
+            
+            # With that parameters, I define a calibration function
+            def data_function(data):
+                return yzero + ymultiplier * (data - yoffset)
+            configuration[ch].update({'FData' : data_function})
+            
+            # Now I return to this channel's original status on screen
+            self.osci.write('SELECT:{} {}'.format(ch, status))
         
-        xze, xin, yze, ymu, yoff = self.osci.query_ascii_values(
-                'WFMPRE:XZE?;XIN?;YZE?;YMU?;YOFF?;',
-                separator=';')
+        self.osci.write('DATA:SOUR {}'.format(origin))
     
         return configuration
+    
+    def re_config_screen(self, channel, status):
+        
+        self._print("Hey! This is missing. Go to the Complains Deparment (if there's someone there)")
+        
+#        self.osci.write('SELECT:{} 1'.format(channel))
+#        
+#        self.osci.write('SELECT:{} {}'.format(channel, status))
 
     def _channels_names(self, channels_user):
         
@@ -387,7 +472,7 @@ class Osci:
                     message = message + "be int {1, 2}" 
                     message = message + "or include 'm'"
                     return ValueError(message)
-            except SyntaxError:
+            except AttributeError:
                 if ch not in self.channels:
                     message = "If channel's element is int,"
                     message = message + "should be on {}".format(
