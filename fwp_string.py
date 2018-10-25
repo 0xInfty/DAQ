@@ -291,3 +291,110 @@ def counting_sufix(number):
         ans = 'th'
     
     return ans
+
+#%%
+
+def string_recognizer(string, partial_keys,
+                      priorized_marker="&"):
+    """This is a function that recognizes a string from partial keys.
+    
+    Parameters
+    ----------
+    string : str
+        Word to be recognized.
+    partial_keys : dic
+        Dictionary used for recognizing. Its keys should be str or tuple.
+    
+    Returns
+    -------
+    dynamic
+    
+    Examples
+    --------
+    >> partial_keys = {'a' : 1,
+                       ('b','c') : 2,
+                       ('&', 'r') : 3,
+                       ('&', 'li', 'le') : 4}
+    >> string_recognizer('a', partial_keys)
+    1
+    >> string_recognizer('add', partial_keys)
+    1
+    >> string_reconizer('b', partial_keys)
+    2
+    >> string_reconizer('c', partial_keys)
+    2
+    >> string_recognizer('rat', partial_keys)
+    3
+    >> string_recognizer('lion', partial_keys)
+    4
+    >> string_reconizer('let', partial_keys)
+    4
+    >> string_recognizer('ale', partial_keys)
+    4
+    """
+    
+    # Obviously, if 'string' is already on the values of partial_keys...    
+    if string in partial_keys.values():
+        return string
+    string = string.lower()
+    
+    # OK then! First of all, I force all keys to be tuple
+    non_priorized_keys = {}
+    for key, value in partial_keys.items():
+        if not isinstance(key, tuple):
+            print(key)
+            non_priorized_keys.update({tuple([key]) : value})
+        else:
+            non_priorized_keys.update({key : value})
+    
+    # Next I priorize some keys
+    priorized_keys = {}
+    for key in non_priorized_keys.keys():
+        for element in list(key):
+            if priorized_marker in element:
+                priorized_keys.update({key : non_priorized_keys[key]})
+                break
+    
+    # Then I define only the others as non-priorized
+    for key in priorized_keys.keys():
+        non_priorized_keys.pop(key)
+    
+    # Now I check the priorized keys are exclusive
+    for examined_key in priorized_keys.keys():
+        for other_key in priorized_keys.keys():
+            
+            if other_key is not examined_key:
+            
+                for element in examined_key:
+                    if element is priorized_marker:
+                        continue                    
+                    if element in list(other_key):
+                        return KeyError(
+                                "Priorized keys are not exclusive",
+                                "because {} and {}".format(
+                                        element,
+                                        other_key))
+    
+    # Next I check non-priorized keys are exclusive
+    for examined_key in non_priorized_keys.keys():
+        for other_key in non_priorized_keys.keys():
+            
+            if other_key is not examined_key:
+            
+                for element in examined_key:
+                    if element in list(other_key):
+                        return KeyError("Non-Priorized keys are ",
+                                        "not exclusive because ",
+                                        "{} and {}".format(
+                                                element,
+                                                other_key))
+
+    for key, value in priorized_keys.items():
+        for a_key in list(key):
+            if a_key in string:
+                return value
+
+    for key, value in non_priorized_keys.items():
+        for a_key in list(key):
+            if a_key in string:
+                return value

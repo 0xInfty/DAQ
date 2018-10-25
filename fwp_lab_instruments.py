@@ -18,7 +18,7 @@ Gen.output : method
 @author: Vall
 """
 
-from fwp_string import find_1st_number
+from fwp_string import find_1st_number, string_recognizer
 import numpy as np
 import pyvisa as visa
 
@@ -145,15 +145,13 @@ class Osci:
         self.osci.write('DAT:ENC RPB')
         self.osci.write('DAT:WID 1') # Binary transmission mode
         
+        # Measurement Configuration                       
+        self.__config_measure__() # Save measurement configuration
+                       
         # Attribute Definitions
         self.print = print_messages
         self.channels = [i+1 for i in range(nchannels)]
-        self.config_measure = self.get_config_measure()
-        self.config_screen = self.get_config_screen()
-        # This last lines save the current measurement configuration
         
-        # Inner Attribute Definitions
-
     def screen(self, channels=[1,2]):
         
         """Takes a full measure of a signal on one or more channels.
@@ -176,7 +174,7 @@ class Osci:
         """        
 
         # First I transform channel names
-        channels = self._channels_names(channels)
+        channels = self.__channels__(channels)
         
         # Now I raise some warnings if a numpy array can't be created
         npoints = []
@@ -184,7 +182,7 @@ class Osci:
         for ch in channels:
             if not self.config_screen['Display'][ch]:
                 self.osci.write('SELECT:{} 1'.format(ch))
-                self.re_config_screen(ch, True)
+                self._config_screen(ch)
             npoints.append(self.config_screen[ch]['NPoints'])
             dtime.append(self.config_screen[ch]['XInterval'])
         if npoints != [npoints[0] for ch in channels]:
@@ -215,18 +213,18 @@ class Osci:
         
         return results
 
-    def measure(self, mtype, channels=1):
+    def measure(self, **kwargs):
         
-        """Takes a measure of a certain type on one or more channels.
+        """Takes a single measure on one or more channels.
         
         Parameters
         ----------
-        mtype : str
+        mode : str, optional
             Key that configures the measure type.
             i.e.: 'Min', 'min', 'minimum', etc.
-        channels=1 : int {1, 2, 3, 4}, str {'M'}, list, optional
-            Number of the measure's channel, where 3 or 'M' both 
-            stand for MATH.
+        channels : int {1, 2, 3, 4}, str {'M'}, list, optional
+            Measurement's channel or channels.
+            i.e.: 1, 'CH1', [1, 'MATH'], etc.
         
         Returns
         -------
@@ -235,29 +233,39 @@ class Osci:
         
         See Also
         --------
-        Osci.re_config_measure()
-        Osci.get_config_measure()
+        Osci._config_measure()
+        Osci._channels()
         
         """
         
-        channels = self._channels_names(channels)
+        # First, I set default to current configuration if none
+        for key, value in self.config_measure.items():
+            try:
+                kwargs[key]
+            except KeyError:
+                kwargs[key] = value
         
+        # Now I aconditionate the channels variable, if needed
+        kwargs['channels'] = self.__channels__(kwargs['channels'])
+        
+        # Now I take one measure at a time
         results = []
-        for ch in channels:
-            self.re_config_measure(mtype, ch)
+        for ch in kwargs['channels']:
+            self._config_measure(**dict(mode = kwargs['mode'],
+                                        source = ch))
         
             result = float(self.osci.query('MEASU:IMM:VAL?'))
             units = self.osci.query('MEASU:IMM:UNI?')
         
-            self._print("{} {}".format(result, units))
+            self.__print__("{} {}".format(result, units))
             
             results.append(result)
         
+        # Finally, I return all measurements at the same time
         try:
             results[1]
         except IndexError:
             results = results[0]
-        
         return results
 
     def trigger(self):
@@ -268,7 +276,7 @@ class Osci:
 #        osci.write('TRIG:MAI:EDGE:SLO RIS')
 #        osci.write('TRIG:MAI:EDGE:SOU CH1') # Option: EXT
 #        osci.write('HOR:MAI:POS 0') # Makes the complete measure at once
-        self._print("Hey! This is missing. What a shame the Complains Department is closed!")
+        self.__print__("Hey! This is missing. What a shame the Complains Department is closed!")
     
     def close(self):
         
@@ -285,7 +293,61 @@ class Osci:
         
         self.osci.close()
         
-    def get_config_measure(self):
+    def __config_measure__(self, **kwargs):
+        
+        """Sets or reconfigures the current measurements' configuration.
+        
+        Parameters
+        ----------
+        mode : str, optional
+            Measurement's type.
+            i.e.: 'minimum', 'mean', 'max', etc.
+        source : str, int, list, optional
+            Measurement's source channel.
+            i.e.: 'CH1', 'MATH'.
+        
+        Returns
+        -------
+        nothing
+        
+        Yields
+        ------
+        Osci.config_measure : attribute
+        
+        """
+        
+        # First of all, I define a dictionary of commands
+        commands = dict(
+                source = 'MEASU:IMM:SOU',
+                mode = 'MEASU:IMM:TYPE',
+                )
+        
+        # Now, if there aren't any kwargs...
+        if not kwargs:
+            try:
+                # Try to set default kwargs as current configuration
+                kwargs = self.config_measure
+            except:
+                # Get current configuration
+                kwargs = {}
+                for key, value in commands:
+                    kwargs.update({key: self.osci.query(value+'?')})
+                self.config_measure = kwargs
+                
+        # Otherwise, if there are kwargs...
+        else:
+
+            # I recognize measuring mode, if there's one
+            if kwargs.get('mode') is not None:
+                kwargs['mode'] = self.__measure_mode__(kwargs['mode'])
+        
+            # Now, reconfigure if needed
+            for key, value in kwargs.items():
+                if self.config_measure[key] != value:
+                    self.osci.write(commands[key])
+                    self.config_measure[key] = value
+
+    def __get_config_screen__(self, channels=False):
         
         """Returns the current measurements' configuration.
         
@@ -299,100 +361,9 @@ class Osci:
             It states the source and type of configured measurement.
             
         """
-        
-        configuration = {}
-        
-        aux = self.osci.query('MEASU:IMM:SOU?')
-        if 'm' in aux:
-            aux = 'M'
-        else:
-            aux = find_1st_number(aux)
-        configuration.update({'Source': # channel
-            self._channels_names(aux)}) 
-        configuration.update({'Type': # type of measurement
-            self.osci.query('MEASU:IMM:TYP?')})
-    
-        return configuration
 
-    def re_config_measure(self, mtype, channel):
-        
-        """Reconfigures the measurement, if needed.
-        
-        Parameters
-        ---------
-        mtype : str
-            Key that configures the measure type.
-            i.e.: 'Min', 'min', 'minimum', etc.
-        channel : str {'CH1', 'CH2', 'CH3', 'CH4', 'MATH'}
-            Measure's channel.
-        
-        Returns
-        -------
-        nothing
-        
-        See Also
-        --------
-        Osci.get_config_measure()
-        
-        """
-        
-        # This has some keys to recognize measurement's type
-        dic = {'mean': 'MEAN',
-               'min': 'MINI',
-               'max': 'MAXI',
-               'freq': 'FREQ',
-               'per': 'PER',
-               'rms': 'RMS',
-               'pk2': 'PK2',
-               'amp': 'PK2', # absolute difference between max and min
-               'ph': 'PHA',
-               'crms': 'CRM', # RMS on the first complete period
-               'cmean': 'CMEAN',
-               'rise': 'RIS', # time betwee  10% and 90% on rising edge
-               'fall': 'FALL',
-               'low': 'LOW', # 0% reference
-               'high': 'HIGH'} # 100% reference
-
-        # Here is the algorithm to recognize measurement's type
-        if 'c' in mtype.lower():
-            if 'rms' in mtype.lower():
-                aux = dic['crms']
-            else:
-                aux = dic['cmean']
-        else:
-            for key, value in dic.items():
-                if key in mtype.lower():
-                    aux = value
-            if aux not in dic.values():
-                aux = 'FREQ'
-                print("Unrecognized measure type ('FREQ' as default).")
-        
-        # Now, reconfigure if needed
-        if self.config_measure['Source'] != channel:
-            self.osci.write('MEASU:IMM:SOU {}'.format(channel))
-            self._print("Measure source changed to '{}'".format(channel))
-        if self.config_measure['Type'] != aux:
-            self.osci.write('MEASU:IMM:TYP {}'.format(aux))
-            self._print("Measure type changed to '{}'".format(aux))
-        
-        self.config_measure = self.get_config_measure()
-        
-        return
-
-    def get_config_screen(self):
-        
-        """Returns the current measurements' configuration.
-        
-        Parameters
-        ----------
-        nothing
-        
-        Returns
-        -------
-        configuration : dict as {'Source': int, 'Type': str}
-            It states the source and type of configured measurement.
-            
-        """
+        if not channels:
+            channels = self.__channels__(self.channels)
 
         origin = self.osci.write('DATA:SOUR?')
         
@@ -432,16 +403,8 @@ class Osci:
         self.osci.write('DATA:SOUR {}'.format(origin))
     
         return configuration
-    
-    def re_config_screen(self, channel, status):
-        
-        self._print("Hey! This is missing. Go to the Complains Deparment (if there's someone there)")
-        
-#        self.osci.write('SELECT:{} 1'.format(channel))
-#        
-#        self.osci.write('SELECT:{} {}'.format(channel, status))
-
-    def _channels_names(self, channels_user):
+            
+    def __channels__(self, channels_user):
         
         """Aconditionates channel or channels' list.
         
@@ -461,28 +424,60 @@ class Osci:
         except:
             channels_user = [channels_user]
     
+        key = {len(self.channels) + 1 : 'MATH'}
+        key.update({ch : 'CH{}'.format(ch) for ch in self.channels})
+        key.update({ch : 'ch{}'.format(ch) for ch in self.channels})
+            
         channels_osc = []
-        for i, ch in enumerate(channels_user):
+        for ch in channels_user:
             try:
-                ch = ch.lower()
                 if 'm' in ch.lower():
-                    channels_osc.append('MATH')
-                else:
-                    message = "Channel's elements should either"
-                    message = message + "be int {1, 2}" 
-                    message = message + "or include 'm'"
-                    return ValueError(message)
+                    ch = 'MATH'
             except AttributeError:
-                if ch not in self.channels:
-                    message = "If channel's element is int,"
-                    message = message + "should be on {}".format(
-                            [i+1 for i in range(self._nchannels)])
-                    return ValueError(message)
-                channels_osc.append("CH{:.0f}".format(ch))
+                try:
+                    ch = key[ch]
+                except KeyError:
+                    if ch not in key.values():
+                        error = "Channel's element should either be on"
+                        error = error + "{}".format(key)
+                        error = error + "or should include 'm' or 'M'"
+                        return ValueError(error)
+            channels_osc.append(ch)
         
         return channels_osc
-    
-    def _print(self, message):
+
+
+    def __measure_mode__(self, mode):
+        
+            # First I set a dictionary with regular expressions
+            regular_expressions = {
+                'me': 'MEAN',
+                ('min', 'mn'): 'MINI',            
+                ('max', 'mx'): 'MAXI',
+                'fre': 'FREQ',
+                'per': 'PER',
+                'rms': 'RMS',
+                ('pk2', 'amp', 'pea'): 'PK2',
+                # absolute difference between max and min
+                'ph': 'PHA',
+                ('&', 'crms', 'cr'): 'CRM', 
+                # RMS on the first complete period
+                ('&', 'cmean', 'cm'): 'CMEAN',
+                'ri': 'RIS', 
+                # time betwee  10% and 90% on rising edge
+                'fa': 'FALL',
+                'l': 'LOW', # 0% reference
+                'h': 'HIGH'} # 100% reference
+            
+            # Now I try to recognize the measuring mode
+            mode = string_recognizer(mode, regular_expressions)
+            # The key is used as a regular expression
+            # The tuples include parallel regular expressions
+            # Some lists of keys are searched first because of '&'
+            
+            return mode
+
+    def __print__(self, message):
         
         """Doesn't print if Osci.print is False.
         
@@ -911,3 +906,4 @@ class Gen:
         self.config_output = self.get_config_output()
         
         return
+    
