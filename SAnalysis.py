@@ -363,7 +363,6 @@ for i in range(5):
 #%% 
 name = 'Settling_Time'
 folder = os.path.join(os.getcwd(),
-                      'DAQ',
                       'Measurements',
                       name)
                       

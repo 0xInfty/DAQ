@@ -160,7 +160,7 @@ samplerate_n = 20#100
 mode = nid.constants.TerminalConfiguration.NRSE
 
 signal_frequency_n = 50#500
-port = 'USB::0x0699::0x0346::C034198::INSTR'
+port = 'USB::0x0699::0x0346::C034167::INSTR'
 
 name = 'Frequency_Sweep'
 
@@ -266,8 +266,14 @@ time on one channel. Then it saves it.
 samplerate = 400e3
 mode = nid.constants.TerminalConfiguration.NRSE
 
-signal_frequency = 10#500
 periods_to_measure = 10
+signal_config = dict(
+        frequency = 100000, #Hz
+        amplitude = 2, #Vpp
+        waveform = 'ram100'
+        )
+
+gen = ins.Gen('USB::0x0699::0x0346::C034167::INSTR', nchannels=1)
 
 name = 'Interbuffer_Time'
 
@@ -275,12 +281,9 @@ name = 'Interbuffer_Time'
 duration = periods_to_measure/signal_frequency
 samples_to_measure = int(samplerate * duration)
 
-folder = os.path.join(os.getcwd(),
-                      'Measurements',
-                      name)
-folder = sav.new_dir(folder)
-filename=os.path.join(folder, name + '.txt')
+filename=sav.savefile_helper(name,'signal_{}Hz_{}Vpp.txt')
 header = 'Time [s]\tData [V]'
+footer = 'Signal: {frequency:.0f}Hz, {amplitude}Vpp, {waveform}'.format(**signal_config)
 
 # ACTIVE CODE
 
@@ -290,6 +293,8 @@ header = 'Time [s]\tData [V]'
 with nid.Task() as task: 
     
     # Configure channel
+    
+    
     task.ai_channels.add_ai_voltage_chan(
             "Dev20/ai1",
             terminal_config=mode)
@@ -298,16 +303,20 @@ with nid.Task() as task:
             rate=samplerate,
             samps_per_chan=samples_to_measure)
 
+    gen.output(True, **signal_config)
+    
     signal = task.read(
             number_of_samples_per_channel=samples_to_measure)
+    
     task.wait_until_done()
 
 # Save measurement
 time = np.linspace(0, duration, samples_to_measure)
-np.savetxt(filename,
+np.savetxt(filename(signal_config['frequency'], signal_config['amplitude']),
            np.array([time, signal]).T,
-           header=header)
+           header=header, footer=footer)
 
+gen.gen.close()
 #%% Settling_Time
 """This script is designed to measure settling time for fixed conditions.
 
@@ -390,14 +399,20 @@ of them, it saves time and voltage.
 # PARAMETERS
 
 # Main parameters
-samplerate = 200e3
+samplerate = 100e3
 mode = nid.constants.TerminalConfiguration.NRSE
 
-signal_frequency = 10
-signal_pk_amplitude = 2
+signal_config = dict(
+        frequency = 50e3, #Hz
+        amplitude = 2, #Vpp
+        waveform = 'ram100'
+        )
+
+gen = ins.Gen('USB::0x0699::0x0346::C034167::INSTR', nchannels=1)
+
 periods_to_measure = 10
 
-name = 'Interchannel_Time'
+name = 'Interchannel_Time_{:.0f}Hz'.format(signal_config['frequency'])
 
 # Other parameters
 duration = periods_to_measure/signal_frequency
@@ -405,23 +420,17 @@ samples_to_measure = int(samplerate * duration)
 channels = [
             "Dev20/ai0",
             "Dev20/ai1",
-            "Dev20/ai9",
-            "Dev20/ai3",
-            "Dev20/ai8",
+            "Dev20/ai2",
+#            "Dev20/ai3",
+#            "Dev20/ai4",
 #            "Dev20/ai5",
-#            "Dev20/ai6",
-            "Dev20/ai11"
+            "Dev20/ai9 ",
+#            "Dev20/ai11"
             ]
 
-signal_slope = signal_pk_amplitude * signal_frequency
+signal_slope = signal_config['frequency'] * signal_config['amplitude']
 
-folder = os.path.join(os.getcwd(),
-                      'Measurements',
-                      name)
-folder = sav.new_dir(folder)
-filename = lambda nchannels : os.path.join(
-        folder, 
-        'NChannels_{}.txt'.format(nchannels))
+filename = sav.savefile_helper(name,'NChannels_{}_signal_{:.0f}Hz.txt')
 
 def headermaker(nchannels, channels=channels):
     header = 'time[s]'
@@ -429,17 +438,15 @@ def headermaker(nchannels, channels=channels):
         header += '\t ch {} [V]'.format(ch.split('/')[-1])
     return header
 
-footer = 'samplingrate={}Hz, Vpp={}V, mode={}, signal_freq={}Hz'.format(
+footer = 'samplingrate={:.0f}Hz, mode={}, Vpp={amplitude}V, signal_freq={frequency:.0f}Hz, waveform={waveform}'.format(
             samplerate,
-            signal_pk_amplitude,
             str(mode).split('.')[-1],
-            signal_frequency)
+            **signal_config)
 
 # ACTIVE CODE
 
-#gen.output(True, waveform='ramp100', 
-#           frequency=signal_frequency,
-#           amplitude=2)
+gen.output(True, **signal_config)
+
 with nid.Task() as task:
 
     for nchannels, channel in enumerate(channels):
@@ -474,10 +481,11 @@ with nid.Task() as task:
 
         data = np.concatenate((time.T, data), axis=1)
         
-        np.savetxt(filename(nchannels), data,
+        np.savetxt(filename(nchannels, signal_frequency), data,
                    header=headermaker(nchannels),
                    footer=footer)
 
+gen.gen.close()
 #%% Interchannel_Time_Order
 """This script is designed to measure interchannel time-delay.
 
@@ -496,13 +504,17 @@ of them, it saves time and voltage.
 samplerate = 100e3
 mode = nid.constants.TerminalConfiguration.NRSE
 
-signal_frequency = 10
-signal_pk_amplitude = 8
-periods_to_measure = 10
-gen_port = 'USB::0x0699::0x0346::C034198::INSTR'
+signal_config = dict(
+        frequency = 10e3, #Hz
+        amplitude = 2, #Vpp
+        waveform = 'ram100'
+        )
 gen_totalchannels = 1
+gen = ins.Gen('USB::0x0699::0x0346::C034167::INSTR', nchannels=gen_totalchannels)
 
-name = 'Interchannel_Time_Order'
+periods_to_measure = 10
+
+name = 'Interchannel_Time_Order_{:.0f}Hz'.format(signal_config['frequency'])
 
 channels_key = ["Dev20/ai3", "Dev20/ai0", "Dev20/ai1", "Dev20/ai2"]
 #"Dev20/ai3", # rojo
@@ -518,9 +530,7 @@ channels_order = [[0,1,2,3],
 duration = periods_to_measure/signal_frequency
 samples_to_measure = int(samplerate * duration)
 
-channels = {i: ch for i, ch in enumerate(channels_key)}
-
-gen = ins.Gen(port=gen_port, nchannels=gen_totalchannels)
+channels = {i:ch for i, ch in enumerate(channels_key)}
 
 folder = os.path.join(os.getcwd(),
                       'Measurements',
@@ -528,7 +538,9 @@ folder = os.path.join(os.getcwd(),
 folder = sav.new_dir(folder)
 filename = lambda order : os.path.join(
         folder, 
-        'Channels_{}.txt'.format(''.join([str(key) for key in order])))
+        'Channels_{}_{:.0f}Hz.txt'.format(
+                ''.join([str(i) for i in order]),
+                signal_config['frequency']))
         
 def headermaker(order, channels=channels):
     header = 'time[s]'
@@ -536,17 +548,14 @@ def headermaker(order, channels=channels):
         header += '\t ch {} [V]'.format(channels[key].split('/')[-1])
     return header
 
-footer = 'samplingrate={}Hz, Vpp={}V, mode={}, signal_freq={}Hz'.format(
+footer = 'samplingrate={:.0f}Hz, mode={}, Vpp={amplitude}V, signal_freq={frequency:.0f}Hz, waveform={waveform}'.format(
             samplerate,
-            signal_pk_amplitude,
             str(mode).split('.')[-1],
-            signal_frequency)
+            **signal_config)
 
 # ACTIVE CODE
 
-gen.output(True, waveform='ramp100', 
-           frequency=signal_frequency,
-           amplitude=2)
+gen.output(True, **signal_config)
 
 for order in channels_order:
     
@@ -613,7 +622,8 @@ duration = periods_to_measure/signal_frequency
 samples_to_measure = int(samplerate * duration/1000)
 
 number_of_channels=3
-channels_to_test = ["Dev20/ai0",
+channels_to_test = [
+                    "Dev20/ai0",
                     "Dev20/ai1",
                     "Dev20/ai2",
                     ]
