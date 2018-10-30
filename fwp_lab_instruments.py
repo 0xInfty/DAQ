@@ -70,42 +70,46 @@ class Osci:
     port : str
         Computer's port where the oscilloscope is connected.
         i.e.: 'USB0::0x0699::0x0363::C108013::INSTR'
+    nchannels=2 : int, optional
+        Total number of the oscilloscope's channels.
     termination='\n' : str, optional
-        VISA's character of line termination.
+        Instrument's character of line termination.
         i.e.: '\n'
+    print_messages=False : bool, optional
+        Parameter that says whether to print or not.
     
     Attributes
     ----------
     Osci.config_measure : dic
         Immediate measurement's current configuration.
-    
-    Other Attributes
-    ----------------
-    Osci._osci : pyvisa.ResourceManager.open_resource() object
-        PyVISA object that allows communication.
-    
-    Other Attributes
-    ----------------
-    Osci.port : str
-        Computer's port where the oscilloscope is connected.
-        i.e.: 'USB0::0x0699::0x0363::C108013::INSTR'
     Osci.print : bool
-        Whether to print messages or not.
-    
+        Parameter that says whether to print or not.
+       
     Methods
     -------
-    Osci.measure(str, int)
-        Makes a measurement of a type 'str' on channel 'int'.
+    Osci.measure(str, channels)
+        Makes a measurement of a type 'str' on certain channel/s
+    Osci.screen(channels)
+        Collects all data on the string on certain channel/s.
+
+    Other Attributes
+    ----------------
+    Osci.__osci : pyvisa.ResourceManager.open_resource() object
+        PyVISA object that allows communication.
+    
+    Other Methods
+    -------------
+    Osci.__print__ : function
+        Only prints if "Osci.print = True".
     
     Examples
     --------
-    >> osci = Osci(port='USB0::0x0699::0x0363::C108013::INSTR')
-    >> result, units = osci.measure('Min', 1, print_result=True)
-    1.3241 V
-    >> result
-    1.3241
-    >> units
-    'V'   
+    >> osci = Osci(port='USB0::0x0699::0x0363::C108013::INSTR',
+                   print_messages=True)
+    >> result = osci.measure('Min', 1)
+    '1.3241 V'
+    >> results = osci.measure('pk2', [1,2])
+    [3, 2.5]
     
     """
 
@@ -115,7 +119,7 @@ class Osci:
         """Defines oscilloscope object and opens it as Visa resource.
         
         It also defines the following attributes:
-                'Osci.osci' (PyVISA object)
+                'Osci.__osci' (PyVISA object)
                 'Osci.config_measure' (Measurement's current 
                 configuration)
                 'Osci.print' (Boolen permission to print)
@@ -125,8 +129,13 @@ class Osci:
         port : str
             Computer's port where the oscilloscope is connected.
             i.e.: 'USB0::0x0699::0x0363::C108013::INSTR'
-        nchannels=2 : int
+        nchannels=2 : int, optional
             Total number of the oscilloscope's channels.
+        termination='\n' : str, optional
+            Instrument's character of line termination.
+            i.e.: '\n'
+        print_messages=False : bool, optional
+            Parameter that says whether to print or not.
         
         Returns
         -------
@@ -135,19 +144,19 @@ class Osci:
         """
         
         # Main Attribute
-        self._osci = visa.ResourceManager().open_resource(
+        self.__osci = visa.ResourceManager().open_resource(
                 port, 
                 read_termination=termination)
                 
-        print(self._osci.query('*IDN?'))
+        print(self.__osci.query('*IDN?'))
         
         # General Configuration
-        self._osci.write('DAT:ENC RPB')
-        self._osci.write('DAT:WID 1') # Binary transmission mode
+        self.__osci.write('DAT:ENC RPB')
+        self.__osci.write('DAT:WID 1') # Binary transmission mode
         
         # Attribute Definitions
         self.print = print_messages
-        self.channels = self._channels([i+1 for i in range(nchannels)])
+        self.channels = self.__channels__([i+1 for i in range(nchannels)])
         self.config_measure = self.get_config_measure()
         self.config_screen = self.get_config_screen()
         # This last lines save the current measurement configuration
@@ -183,7 +192,7 @@ class Osci:
         dtime = []
         for ch in channels:
             if not self.config_screen['Display'][ch]:
-                self._osci.write('SELECT:{} 1'.format(ch))
+                self.__osci.write('SELECT:{} 1'.format(ch))
                 self.re_config_screen(ch, True)
             npoints.append(self.config_screen[ch]['NPoints'])
             dtime.append(self.config_screen[ch]['XInterval'])
@@ -196,22 +205,23 @@ class Osci:
                     "{} have different number of points".format(
                             channels))
         # Next I stop acquiring
-        self._osci.write('ACQ:STATE 0')
+        self.__osci.write('ACQ:STATE 0')
         
         # I measure (np.array that has time, channels on its columns)
         results = []
         results.append(np.linspace(0, npoints*dtime, dtime)) # time
         for ch in channels:
-            self._osci.write('DATA:SOUR {}'.format(ch))
-            data = self._osci.query_binary_values('CURV?', 
-                                                 datatype='B', 
-                                                 container=np.array)
+            self.__osci.write('DATA:SOUR {}'.format(ch))
+            data = self.__osci.query_binary_values(
+                    'CURV?', 
+                    datatype='B', 
+                    container=np.array)
             data = self.config_screen[ch]['FData'](data)
             results.append(data) # voltage data
         results = np.array(results).T
         
         # I keep acquiring
-        self._osci.write('ACQ:STATE 1')
+        self.__osci.write('ACQ:STATE 1')
         
         return results
 
@@ -246,10 +256,10 @@ class Osci:
         for ch in channels:
             self.re_config_measure(mtype, ch)
         
-            result = float(self._osci.query('MEASU:IMM:VAL?'))
-            units = self._osci.query('MEASU:IMM:UNI?')
+            result = float(self.__osci.query('MEASU:IMM:VAL?'))
+            units = self.__osci.query('MEASU:IMM:UNI?')
         
-            self._print("{} {}".format(result, units))
+            self.__print__("{} {}".format(result, units))
             
             results.append(result)
         
@@ -268,7 +278,7 @@ class Osci:
 #        osci.write('TRIG:MAI:EDGE:SLO RIS')
 #        osci.write('TRIG:MAI:EDGE:SOU CH1') # Option: EXT
 #        osci.write('HOR:MAI:POS 0') # Makes the complete measure at once
-        self._print("Hey! This is missing. What a shame the Complains Department is closed!")
+        self.__print__("Hey! This is missing. What a shame the Complains Department is closed!")
     
     def close(self):
         
@@ -283,7 +293,7 @@ class Osci:
         nothing
         """
         
-        self._osci.close()
+        self.__osci.close()
         
     def get_config_measure(self):
         
@@ -302,15 +312,15 @@ class Osci:
         
         configuration = {}
         
-        aux = self._osci.query('MEASU:IMM:SOU?')
+        aux = self.__osci.query('MEASU:IMM:SOU?')
         if 'm' in aux:
             aux = 'M'
         else:
             aux = find_1st_number(aux)
         configuration.update({'Source': # channel
-            self._channels(aux)}) 
+            self.__channels__(aux)}) 
         configuration.update({'Type': # type of measurement
-            self._osci.query('MEASU:IMM:TYP?')})
+            self.__osci.query('MEASU:IMM:TYP?')})
     
         return configuration
 
@@ -369,11 +379,11 @@ class Osci:
         
         # Now, reconfigure if needed
         if self.config_measure['Source'] != channel:
-            self._osci.write('MEASU:IMM:SOU {}'.format(channel))
-            self._print("Measure source changed to '{}'".format(channel))
+            self.__osci.write('MEASU:IMM:SOU {}'.format(channel))
+            self.__print__("Measure source changed to '{}'".format(channel))
         if self.config_measure['Type'] != aux:
-            self._osci.write('MEASU:IMM:TYP {}'.format(aux))
-            self._print("Measure type changed to '{}'".format(aux))
+            self.__osci.write('MEASU:IMM:TYP {}'.format(aux))
+            self.__print__("Measure type changed to '{}'".format(aux))
         
         self.config_measure = self.get_config_measure()
         
@@ -394,7 +404,7 @@ class Osci:
             
         """
 
-        origin = self._osci.write('DATA:SOUR?')
+        origin = self.__osci.write('DATA:SOUR?')
         
         configuration = {}
         configuration.update({'Display' : {}})
@@ -402,17 +412,17 @@ class Osci:
             configuration.update({ch : {}})
             
             # First I check whether this channel is being shown or not
-            status = self._osci.query('SELECT:{} 1'.format(ch))
+            status = self.__osci.query('SELECT:{} 1'.format(ch))
             configuration['Display'].update({ch : bool(int(status))})
-            self._osci.write('SELECT:{} 1'.format(ch))
-            self._osci.write('DATA:SOUR {}'.format(ch))
+            self.__osci.write('SELECT:{} 1'.format(ch))
+            self.__osci.write('DATA:SOUR {}'.format(ch))
             
             # Now, I save some parameters
-            xinterval = float(self._osci.query('WFMPRE:XIN?'))
-            yzero, ymultiplier, yoffset = self._osci.query_ascii_values(
+            xinterval = float(self.__osci.query('WFMPRE:XIN?'))
+            yzero, ymultiplier, yoffset = self.__osci.query_ascii_values(
                     'WFMPRE:YZE?;YMU?;YOFF?',
                     separator=';')
-            npoints = int(self._osci.query('WFMP:NR_Pt?'))
+            npoints = int(self.__osci.query('WFMP:NR_Pt?'))
             configuration[ch].update({
                     'XIncrement' : xinterval,
                     'YZero' : yzero,
@@ -427,21 +437,21 @@ class Osci:
             configuration[ch].update({'FData' : data_function})
             
             # Now I return to this channel's original status on screen
-            self._osci.write('SELECT:{} {}'.format(ch, status))
+            self.__osci.write('SELECT:{} {}'.format(ch, status))
         
-        self._osci.write('DATA:SOUR {}'.format(origin))
+        self.__osci.write('DATA:SOUR {}'.format(origin))
     
         return configuration
     
     def re_config_screen(self, channel, status):
         
-        self._print("Hey! This is missing. Go to the Complains Deparment (if there's someone there)")
+        self.__print__("Hey! This is missing. Go to the Complains Deparment (if there's someone there)")
         
 #        self._osci.write('SELECT:{} 1'.format(channel))
 #        
 #        self._osci.write('SELECT:{} {}'.format(channel, status))
 
-    def _channels_names(self, channels_user):
+    def __channels__(self, channels_user):
         
         """Aconditionates channel or channels' list.
         
@@ -482,7 +492,7 @@ class Osci:
         
         return channels_osc
     
-    def _print(self, message):
+    def __print__(self, message):
         
         """Doesn't print if Osci.print is False.
         
@@ -527,13 +537,13 @@ class Gen:
     
     Attributes
     ----------
-    Gen.port : str
-        Computer's port where the oscilloscope is connected.
-        i.e.: 'USB0::0x0699::0x0363::C108013::INSTR'
-    Gen.gen : pyvisa.ResourceManager.open_resource() object
-        PyVISA object that allows communication.
     Gen.config_output : dic
         Outputs' current configuration.
+    
+    Other Attributes
+    ----------------
+    Gen.__gen : pyvisa.ResourceManager.open_resource() object
+        PyVISA object that allows communication.
     
     Methods
     -------
@@ -570,8 +580,7 @@ class Gen:
         """Defines oscilloscope object and opens it as Visa resource.
         
         It also defines the following attributes:
-                'Gen.port' (PC's port where it is connected)
-                'Gen.osci' (PyVISA object)
+                'Gen.__gen' (PyVISA object)
                 'Gen.config_output' (Outputs' current 
                 configuration)
         
@@ -580,6 +589,9 @@ class Gen:
         port : str
             Computer's port where the oscilloscope is connected.
             i.e.: 'USB0::0x0699::0x0346::C036493::INSTR'
+        termination='\n' : str
+            
+        
         
         Returns
         -------
@@ -598,7 +610,7 @@ class Gen:
         
         self.port = port
         self.nchannels = nchannels
-        self._gen = gen
+        self.__gen = gen
         self.config_output = self.get_config_output()
     
     def output(self, status, channel=1, 
